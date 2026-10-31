@@ -95,6 +95,7 @@ No promise of bypassing channel checks, avoiding account restrictions, or obtain
 - [二、客户端身份文本](#identity-rules)：Claude Code、Codex、DeepSeek Harness。
 - [三、请求头](#header-rules)：调用方过滤与上游构造分开处理。
 - [四、使用与反馈边界](#feedback-scope)：数据最小化与安全反馈。
+- [🔗 相关项目与参考资料](#related-projects)：高关联实现与专题，单向参考、非背书。
 - [五、免责声明与风险告知](#disclaimer)：授权、费用、数据、责任与许可证关系。
 
 ### 推荐阅读顺序
@@ -198,6 +199,7 @@ WorkBuddy 外部记录的原始参考项目包括 [WorkBuddy2API-Hub](https://gi
 | `compat.workbuddy-stream` | WorkBuddy | 来源实现统一走上游流式链路 | 设 `stream: true`；需要非流式结果时同样由宿主聚合并检查结束状态 |
 | `compat.workbuddy-usage` | WorkBuddy | 来源实现显式请求流式用量 | 设 `stream_options.include_usage: true`；集成时保留可支持的其他字段，不承诺上游必然返回完整用量 |
 | `compat.empty-tool-calls` | WorkBuddy | 来源实现清除空工具调用字段 | 删除 assistant 消息里的空 `tool_calls: []`；非空列表保持不变 |
+| `compat.workbuddy-token-limit` | WorkBuddy | 本次补充并做合成回归的字段别名规范化，尚未真实模型验证 | 将 `max_completion_tokens` 映射到 `max_tokens` 并移除原别名；两者同时存在时以显式 `max_tokens` 为准，不修改原请求。不同模型的推理预算语义可能不同，不能保证完全等价 |
 
 注意：
 
@@ -205,6 +207,16 @@ WorkBuddy 外部记录的原始参考项目包括 [WorkBuddy2API-Hub](https://gi
 - 只在必要字段应用明确规则；身份文本处理仅作用于表中指定的 system / developer / assistant，不修改 user/tool 正文，也不删除图片等非文本内容块。
 - 转换前复制输入，避免污染其他上游的回退请求。不要丢失工具调用消息与其对应结果。
 - 宿主仍需校验有效消息、工具结构与目标协议要求；只补一条默认 system 并不能让空请求成为有效对话。
+
+### 生态规则差异复核（2026-10-31）
+
+本次以外部公开材料作问题线索，再检查来源实现；没有执行第三方代码或调用真实上游。以下不是新增的“生产上游验证成功”记录：
+
+- **已修正实现**：保留现有 `stream_options`，只强制用量开关；反馈样板仅匹配独立整行，保留相似 URL、issue 详情、查询串与同行任务说明。后者使实现与本仓库已有的严格匹配描述保持一致。
+- **已补合成回归的已有边界**：逐个标准 text 块处理，保留图片、缓存元数据、工具调用及结果关联、user/tool 正文；验证输入不变和重复处理。这些不是此前完全缺失的能力。
+- **新增的字段别名处理**：见 `compat.workbuddy-token-limit`。有本地合成回归，不宣称真实平台验收完成。
+- **未直接采纳**：全局替换品牌、工具单向改名、改变 tuple/enum/regex 语义的 schema“修复”、tool→user 无条件插空 assistant、以首问内容推定会话，以及照搬其他站点固定身份头。这些可能丢失工具约束、破坏响应名称回传或混淆会话，不能仅凭其他项目的 PR 自述就作为通用规则。
+- **继续验证的方向**：工具名与 `tool_choice` 的双向映射、schema 语义保真、注入/合并顺序、跨轮次与重试 ID 的生命周期矩阵。国际区文本处理范围没有因本次调研而扩大。
 
 <a id="identity-rules"></a>
 
@@ -324,6 +336,22 @@ WorkBuddy 外部记录的原始参考项目包括 [WorkBuddy2API-Hub](https://gi
 - `11128` 应结合 HTTP 状态、请求结构与受控排查结果分析；不能通过修改错误码掩盖上游拒绝。配额不足、登录失效、权限不足和账号风控应分别处理，不属于身份文本改写可以解决的问题。
 
 - 普通问题请在 [Issues](https://github.com/CamarilloG/codebuddy-workbuddy-rules/issues) 中提供**合成、去标识化**的最小样例。敏感漏洞优先使用 [GitHub 私密漏洞报告](https://github.com/CamarilloG/codebuddy-workbuddy-rules/security/advisories/new)，不要先公开细节。
+
+<a id="related-projects"></a>
+
+## 🔗 相关项目与参考资料 / Related projects
+
+**单向参考列表，不是已建立互链的“友情链接”，也不表示合作、推荐、代码依赖、授权或安全背书。** 本仓库专注规则与排障说明，下列项目主要提供运行实现或 Agent 集成。能力和维护状态依据 2026-10-31 的公开资料快照，未运行验收，后续请以各项目自身说明为准。
+
+| 项目 | 与本文的关联 / 值得参考的内容 | 注意事项 |
+|---|---|---|
+| [WorkBuddy2API Hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub) | 国内/国际独立网关、多 Agent 配置、兼容修复记录 | README 宣告低频维护；Messages 是实验性能力，不当作全场景支持保证 |
+| [WorkBuddy Local Gateway](https://github.com/CangShui/workbuddy-gateway) | Go 网关；[出站兼容](https://github.com/CangShui/workbuddy-gateway/blob/b65634ae098bddaff9b786e1d04d8288c012c211/docs/outbound-compatibility.md)与 [DSH 历史/文本块专题](https://github.com/CangShui/workbuddy-gateway/blob/b65634ae098bddaff9b786e1d04d8288c012c211/docs/11128-dsh-history.md)（复核时固定版本） | 文档中的验证范围与实际实现需分别看；不据此扩大本仓库验证范围，复用代码前自行核对许可 |
+| [OmniRoute](https://github.com/cheaper-inference/OmniRoute) | 多供应商网关；[WorkBuddy 兼容 PR #17046](https://github.com/cheaper-inference/OmniRoute/pull/17046) 提供头部、工具 schema、消息形状与 ID 设计的研究线索 | 已合并不等于每项处理都适合本项目；PR 自述与本仓库独立验证不同 |
+| [dsh-connect-workbuddy](https://github.com/dingminhua/dsh-connect-workbuddy) | WorkBuddy 接入 DeepSeek Harness 的插件；模型目录、双区域和具体 Agent 接入体验 | 依赖非官方开放 API 的客户端接口；项目不承诺长期可用，本仓库没有代其验收 |
+| [magpie](https://github.com/yetone/magpie) | 多 Agent / 多供应商网关、配置与插件生态 | 不仅面向 Buddy；README 指明社区反馈走 Discord、不接受外部 PR，联系前先看当前规则 |
+
+欢迎提出有明确关联的资料建议：说明具体问题、对应章节和证据类型即可；不收录账号售卖、凭证分享、无关广告或“永久免封”承诺。这里的参考不增加 Apache-2.0 的许可限制。
 
 <a id="disclaimer"></a>
 
