@@ -1,79 +1,58 @@
 # CodeBuddy / WorkBuddy Rules
 
-**非官方的 CodeBuddy、WorkBuddy 请求兼容规则与 Python 参考执行器。**
+非官方的 CodeBuddy、WorkBuddy 请求规则分享：上游对请求有哪些限制或识别点，转发前应该把请求改成什么样。
 
-面向自建网关、代理和 Agent 工作流：规则在一个地方维护，宿主固定版本引用，自行完成认证、请求发送与响应处理。不是 API 中转服务，不提供账号、Token、模型额度或登录功能；与腾讯及相关客户端项目无隶属或背书关系。
+适用场景：用自建网关或代理把 OpenAI 格式（`/chat/completions`）的请求转发到 CodeBuddy / WorkBuddy。如果你的客户端发的是 Anthropic 格式（如 Claude Code 原生请求），先转成 OpenAI 格式，再套用下面的规则。
 
-> 未进行真实平台请求验证，不承诺任何规则能解决当前渠道限制。身份规则默认关闭，请在确认授权与影响后显式选择。
+> 以下规则只用合成样例验证过，**没有在真实平台上测试**，平台随时可能调整。与腾讯及相关客户端项目无隶属或背书关系；使用前请自行核对服务条款。
 
-## 包含什么
+## 一、协议格式
 
-- **协议兼容**：developer → system；CodeBuddy 具名函数选择转换为仅保留目标工具的 `required`；WorkBuddy 补充 system、流式和用量参数、移除 assistant 空工具列表。
-- **请求头边界**：默认仅允许 `accept`、`content-type`；不透传调用方凭证、Cookie、会话头和客户端产品头。未知头默认丢弃，而不是维护不完整的黑名单。
-- **可选身份文本规则**：Claude Code 产品身份与反馈样板、Codex 产品身份。默认不改写，必须逐个规则 ID 启用；只处理指定角色与文本块，不处理 user/tool 正文或非文本块。
-- **修改记录**：返回规则 ID、字段位置、操作类型，不包含正文与请求头值。
-- **可同步规则清单**：见 [规则清单](buddy_rules/rules.json)，包含身份文本规则与请求头策略。协议兼容转换、执行顺序、区域门槛和异常行为目前定义在 [Python 参考实现](buddy_rules/__init__.py) 中；仅复制 JSON 不足以复现全部行为，跨语言实现还须对照源码和回归测试。
+| 规则 ID | 平台 | 上游限制 | 改成什么 |
+|---|---|---|---|
+| `compat.developer-role` | 两者 | 不接受 `developer` 角色 | 把 `role: "developer"` 改成 `role: "system"`，内容不变 |
+| `compat.codebuddy-tool-choice` | CodeBuddy | 不接受按名字指定工具：`tool_choice: {"type":"function","function":{"name":"X"}}` | `tools` 只保留名为 `X` 的那一个工具，`tool_choice` 改成 `"required"` |
+| `compat.workbuddy-system` | WorkBuddy | 第一条消息必须是 system | 第一条不是 system 时，在最前面插入 `{"role":"system","content":"You are a helpful assistant."}` |
+| `compat.workbuddy-stream` | WorkBuddy | 只支持流式 | 设 `stream: true`；需要非流式结果的话，由网关自己把 SSE 聚合成完整回复 |
+| `compat.workbuddy-usage` | WorkBuddy | 不返回用量，除非显式要求 | 设 `stream_options.include_usage: true`，保留 `stream_options` 里原有的其他字段 |
+| `compat.empty-tool-calls` | WorkBuddy | 不接受 assistant 消息里的空 `tool_calls: []` | 删掉这个字段；非空的 `tool_calls` 保持不变 |
 
-不包含：官方客户端身份头伪装、账号登录、签到奖励、凭证刷新、SSE 聚合、故障切换、自动网络同步、私有部署配置。没有提供 DSH 运行时提示词或个人工作流规则。
+注意：
 
-## 安装与接入
+- CodeBuddy 缩减工具列表后，如果历史消息里调用过其他工具，上游可能因为找不到那些工具而拒绝请求，需要在你的工作流里实测。
+- 只改 system / developer / assistant 消息，不要动 user 和 tool 消息，也不要删图片等非文本内容块。
 
-Python 3.10+，运行时零第三方依赖。在仓库目录执行：
+## 二、客户端身份文本
 
-```sh
-python -m pip install .
-python -m unittest discover -s tests -v
-```
+system 提示词里的这些固定句子会暴露请求来自哪个客户端。下面的正则按整行匹配，命中后**删除整行**（替换为空字符串），同一行里的其他内容和对品牌名的普通提及不受影响。
 
-```python
-from buddy_rules import transform
+| 规则 ID | 客户端 | 作用角色 | 匹配的原文 | 正则 |
+|---|---|---|---|---|
+| `identity.claude-code` | Claude Code | system、developer、assistant | `You are Claude Code, Anthropic's official CLI for Claude.`（含 `, running within the Claude Agent SDK` 变体） | `(?m)^[ \t]*You are Claude Code, Anthropic's official CLI for Claude(?:, running within the Claude Agent SDK)?\.(?=\s\|$)[ \t]*(?:\r?\n)?` |
+| `identity.claude-feedback` | Claude Code | system、developer、assistant | `- To give feedback, users should report the issue at https://github.com/anthropics/claude-code/issues`（必须是独立一整行） | `(?m)^[ \t]*-[ \t]*To give feedback, users should report the issue at https://github\.com/anthropics/claude-code/issues[ \t]*(?=\r?$)(?:\r?\n)?` |
+| `identity.codex` | Codex | system、developer | `Codex CLI is an open source project led by OpenAI.` | `(?m)^[ \t]*Codex CLI is an open source project led by OpenAI\.(?:[ \t]*\r?\n\|[ \t]+\|$)` |
 
-result = transform(
-    {"messages": [{"role": "user", "content": "Hello"}]},
-    {"Content-Type": "application/json", "User-Agent": "MyClient/1.0"},
-    platform="codebuddy",  # 或 workbuddy
-    region="cn",          # cn / intl
-)
+表格里的 `\|` 是为了不打断 Markdown 表格，复制到代码里时写成 `|`。
 
-# 在宿主中使用 result.payload 和 result.headers。
-# 此后由宿主注入目标平台凭证和获准使用的协议头；不要注入调用方凭证。
-# result.changes 可用于审计，但不要默认记录 result.payload。
-```
+已知没覆盖到的变体：Agent SDK 的 `You are a Claude agent, built on Anthropic's Claude Agent SDK.` 不在上面的规则里，需要的话按同样的整行写法自己加一条。
 
-明确有权采用对应转换后，才选择启用身份规则：
+## 三、请求头
 
-```python
-result = transform(
-    payload,
-    platform="codebuddy",
-    identity_rules=("identity.claude-code",),
-)
-```
+上游能从请求头看出调用方是谁、用的什么客户端。做法是**只放行白名单**，其余全部丢弃，而不是维护一份黑名单。
 
-WorkBuddy intl 不继承国内区身份规则：如果显式选身份规则，还需额外指定 `allow_international_identity=True`。这是防误用门槛，**不是国际区兼容性或授权证明**。
+| 类别 | 头部名称 | 处理 |
+|---|---|---|
+| 默认放行 | `accept`、`content-type` | 保留，名称统一转小写 |
+| 调用方凭证 | `authorization`、`proxy-authorization`、`cookie`、`set-cookie`、`x-api-key`、`api-key` | 丢弃；由网关注入目标平台自己的凭证 |
+| 逐跳头 | `host`、`content-length`、`connection`、`transfer-encoding`、`keep-alive`、`te`、`trailer`、`upgrade` | 丢弃；`Connection` 头里点名的字段也一并丢弃 |
+| 客户端身份 / 会话头 | `user-agent`、`x-ide-name`、`x-ide-type`、`x-ide-version`、`x-agent-intent`、`x-agent-purpose`、`x-agent-type`、`x-claude-code-session-id`、`x-opencode-session`、`x-opencode-session-id` | 丢弃；这只是常见例子，未列出的头默认也丢 |
 
-`extra_forward_headers=("x-trace",)` 可扩展透传允许列表，但不能放行已知凭证、逐跳头和客户端身份头。宿主仍须确保新增字段没有用户隐私。会话关联应由宿主单独设计，不要把用户会话 ID 当成可公开共享的规则值。
+其他要点：
 
-## 规则契约与限制
+- 放行的头值里不能有控制字符（`\t` 除外），防止 `\r\n` 注入。
+- 大小写不同的同名头（如 `Accept` 和 `accept`）同时出现时，不要随便取一个，应直接拒绝。
+- 需要额外透传某个头（例如链路追踪 `x-trace`）时再单独加进白名单，但凭证、逐跳头和上面的客户端身份头不要放行。
 
-1. 先复制输入，不原地修改，避免污染其他供应商回退候选。
-2. 不修改 user/tool 消息；不丢弃工具调用消息和非文本内容。身份规则清空文本后保留空文本/消息结构，由宿主完成目标协议校验。
-3. 规则不保证语义完全无损：角色降级、工具列表缩减、身份文本删除均可影响行为，应在宿主工作流测试。
-4. CodeBuddy 的流式限制仍需宿主适配；本库不会把非流式自动聚合成完整回复。
-5. HTTP 请求头输出统一小写。不生成授权头、官方产品 UA、版本、账号或会话标识。
-6. Change 记录不会回显正文或任意输入头名称，但 payload/headers 本身仍可能含隐私，不能直接打日志。
-7. 公共样板匹配不等于第三方渠道获准；不保证通过渠道校验，不提供防封号承诺。
+## 许可证
 
-## 验证与更新
-
-本版只通过合成回归样例验证转换行为，**没有真实平台验证日期或官方支持承诺**。不要把过去某版本的行为当作当前事实。规则失效时记录平台/区域/客户端版本、最小合成复现和预期差异，不能提交原始请求转储。
-
-生产环境固定 tag/commit，更新后运行自己的回归测试再部署；不下载并执行远端最新规则。不支持在配置中注入任意可执行脚本。
-
-## 安全与贡献
-
-- [安全说明](SECURITY.md)：漏洞报告及数据最小化。
-- [贡献规范](CONTRIBUTING.md)：规则分类、反例、变更记录与隐私要求。
-- [变更记录](CHANGELOG.md)。
-
-本库不是官方 SDK。CodeBuddy、WorkBuddy、Claude Code、Codex 等名称仅用于说明兼容目标，商标归各自权利人。使用者须核对服务条款、授权范围与所在环境的合规要求。本项目按 [Apache-2.0](LICENSE) 许可证发布。
+[Apache-2.0](LICENSE)。CodeBuddy、WorkBuddy、Claude Code、Codex 等名称仅用于说明兼容目标，商标归各自权利人。
