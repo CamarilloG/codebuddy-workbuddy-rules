@@ -24,7 +24,16 @@
 
 ## 二、客户端身份文本
 
-system 提示词里的这些固定句子会暴露请求来自哪个客户端。下面的正则按整行匹配，命中后**删除整行**（替换为空字符串），同一行里的其他内容和对品牌名的普通提及不受影响。
+system 提示词里的这些固定句子会暴露请求来自哪个客户端。命中时上游返回 `400`，业务码 `11128`（渠道校验失败）；同一个码还有一个变体 `first message is not system prompt`，对应第一节的 `compat.workbuddy-system`。
+
+两种处理方式：
+
+- **删除**：纯产品样板、删了不影响任务的句子（Claude Code、Codex）。
+- **改写**：本身是有效任务上下文的句子（DSH）。只换措辞、不改语义，措辞一变就不再命中，模型照样看得懂。
+
+### Claude Code / Codex：删除整行
+
+下面的正则按整行匹配，命中后替换为空字符串，同一行里的其他内容和对品牌名的普通提及不受影响。
 
 | 规则 ID | 客户端 | 作用角色 | 匹配的原文 | 正则 |
 |---|---|---|---|---|
@@ -35,6 +44,23 @@ system 提示词里的这些固定句子会暴露请求来自哪个客户端。�
 表格里的 `\|` 是为了不打断 Markdown 表格，复制到代码里时写成 `|`。
 
 已知没覆盖到的变体：Agent SDK 的 `You are a Claude agent, built on Anthropic's Claude Agent SDK.` 不在上面的规则里，需要的话按同样的整行写法自己加一条。
+
+### DeepSeek Harness（DSH）：改写措辞
+
+| 规则 ID | 作用角色 | 原文 | 改成 | 正则 |
+|---|---|---|---|---|
+| `identity.dsh` | system、developer、assistant | `You are an AI agent powered by DeepSeek Harness.` | `You are an AI agent.` | `(?m)^([ \t]*)You are an AI agent powered by DeepSeek Harness(?=[.\t ]\|$)` → `\1You are an AI agent` |
+| `identity.dsh-gui` | system、developer | `You are interacting with the user through the DeepSeek Harness Web GUI ...` | `You are interacting with the user through the Web GUI ...` | `(?m)^([ \t]*)You are interacting with the user through the DeepSeek Harness Web GUI(?=[.\t ])` → `\1You are interacting with the user through the Web GUI` |
+| `identity.dsh-path-at` | system、developer | `Tokens prefixed with @ are paths the user explicitly referenced.` | `@-prefixed tokens are paths the user referenced explicitly.` | `Tokens prefixed with @\s+are paths the user\s+explicitly referenced\.` |
+| `identity.dsh-path-resolve` | system、developer | `Relative paths resolve from the workspace root; absolute paths identify files or directories on the host.` | `Relative paths are resolved against the workspace root; absolute paths point at files or directories on the host.` | `Relative paths resolve\s+from the workspace root;\s*absolute paths identify files or directories on the host\.` |
+
+说明：
+
+- **Web GUI 句只锚定固定前缀**。这句话的结尾在 DSH 版本之间变过：旧版是 `...Web GUI whose URL the runtime context names.`，2.0.x 是 `...Web GUI at http://127.0.0.1:43120.`。按整句精确匹配的话，DSH 一升级规则就会悄悄失效。
+- **`@` 路径说明的两句只有连着出现才会触发**，单独出现任意一句都能通过。但这两句是真实的工具使用规则（告诉模型 `@` 路径怎么解析），所以两句都改写，不要删。
+- 两条路径规则的正则要开 `re.S`（DOTALL），并允许句中换行，DSH 的提示词可能在词与词之间折行。
+- **assistant 消息只改身份句**。上游会把模型自己复述过的身份句当成非授权渠道的证据；Web GUI 句和路径说明出现在 assistant 消息里不会触发，不用动。
+- 改写后的文本不会再次命中，重复处理结果不变。
 
 ## 三、请求头
 
