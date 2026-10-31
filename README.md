@@ -6,14 +6,17 @@
 
 **请求兼容规则手册 · 文档分享 · 非官方**
 
-Protocol compatibility · Client identity text · Header boundaries
+CodeBuddy / WorkBuddy troubleshooting for Claude Code, Codex & DeepSeek Harness
+
+请求兼容 · 反代 / reverse proxy · HTTP 400 / 11128 · 会话请求头
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 ![Documentation only](https://img.shields.io/badge/Scope-Docs%20Only-64748b)
 ![Unofficial](https://img.shields.io/badge/Status-Unofficial-orange)
-![Live verification: not independently verified](https://img.shields.io/badge/Live%20Verification-Not%20Independently%20Verified-lightgrey)
+![Evidence: production records and external reports](https://img.shields.io/badge/Evidence-Production%20Records%20%2B%20External%20Reports-64748b)
+![Documentation reviewed: 2026-10-31](https://img.shields.io/badge/Docs%20Reviewed-2026--10--31-blue)
 
-**[📖 规则目录](#rule-index) · [🛡️ 免责声明](#disclaimer) · [💬 安全反馈](https://github.com/CamarilloG/codebuddy-workbuddy-rules/security/advisories/new) · [📜 许可证](LICENSE)**
+**[🔎 按报错查](#error-index) · [English](#english) · [📖 规则目录](#rule-index) · [🛡️ 免责声明](#disclaimer) · [💬 安全反馈](https://github.com/CamarilloG/codebuddy-workbuddy-rules/security/advisories/new) · [📜 许可证](LICENSE)**
 
 </div>
 
@@ -21,6 +24,56 @@ Protocol compatibility · Client identity text · Header boundaries
 
 > [!WARNING]
 > **不是官方接口规范，不提供账号、模型服务或通过校验的保证。** 修改客户端身份不等于获得平台授权。请先阅读[完整免责声明](#disclaimer)，再判断是否适合你的环境；不要将真实凭证、完整系统提示词或私人部署信息提交到仓库。
+
+非官方的 **CodeBuddy / WorkBuddy 反代与第三方 Agent 请求兼容排障手册**，面向自建网关集成 Claude Code、Codex 与 DeepSeek Harness（DSH）时的相关报错。只分享规则与排障记录，不提供可运行反代或官方接入授权。
+
+<a id="error-index"></a>
+
+## 🔎 按错误快速定位 / Troubleshooting by error
+
+**看到 CodeBuddy / WorkBuddy 的 `HTTP 400 / 11128`，先区分消息角色、请求结构、会话头与已知客户端文本，不要直接判定“封号”或“额度不足”。** 下表的错误文本是历史记录中的原文或片段，不代表所有版本都使用同一文案。
+
+| 错误原文 / 检索入口 | 平台、区域与证据 | 优先排查方向 | 详细说明 |
+|---|---|---|---|
+| `HTTP 400` / `11128` | CodeBuddy：生产记录；WorkBuddy：分区域实现与外部记录，不能跨区推断 | 角色、消息形状、会话头及已知文本特征；单凭码不能定位 | [案例](#incident-records) · [文本规则](#identity-rules) |
+| `Illegal API invocation from an unapproved channel` | CodeBuddy 历史调用记录；具体客户端版本未知 | 第三方客户端请求特征与渠道授权；不是通用网络故障 | [Claude Code / Codex / DSH 案例](#incident-records) |
+| `first message is not system prompt` | WorkBuddy 外部调研记录（E）；区域与版本未明确 | 首条消息形状；不要把同一个 `11128` 一律归为指纹 | [system 处理](#protocol-rules) |
+| `check ua, get coding copilot version error` | CodeBuddy 模型目录请求，生产记录（P）；不推广至所有端点 | 目录端点与客户端版本头要求，不是身份文本清理 | [目录头检查](#catalog-headers) |
+| `Non-stream chat request is currently not supported` / `11101` | CodeBuddy 非流式接入记录（P） | 上游是否收到非流式请求；聚合时检查正常结束 | [流式规则](#protocol-rules) |
+| `422` / `unknown variant developer` | 生产排障中的非 Buddy 回退上游（P） | 找到实际失败的候选；检查角色支持，别误归因 CodeBuddy | [回退案例](#incident-records) |
+| `11140` | 来源实现的账号限制分类；不是已证明由指纹清理解除的案例 | 检查账号与官方渠道状态，不承诺通过改词解决 | [不属于清洗成果的限制](#not-identity-fixes) |
+| `429` / `6004` | 来源实现的频率、配额或模型窗口分类；不保证仅凭码能定因 | 分析额度、频率与错误上下文 | [独立限制](#not-identity-fixes) |
+| `401` | 登录或凭证相关分类，非身份规则通过证明 | 核查授权状态与凭证有效性；不要公开令牌 | [独立限制](#not-identity-fixes) |
+
+### 按客户端定位
+
+- **Claude Code + CodeBuddy / WorkBuddy**：查看[身份句、反馈样板与分支措辞](#claude-codex-rules)。Claude Code 原生 Anthropic 请求需先完成适当的协议适配，本文不提供翻译层。
+- **Codex + CodeBuddy / WorkBuddy**：查看[产品来源句](#claude-codex-rules)；不把其他 SDK 身份变体自动视为已验证规则。
+- **DeepSeek Harness / DSH + CodeBuddy**：查看[GUI 句式变化、assistant 历史与路径组合案例](#incident-records)，再看 [DSH 具体规则](#dsh-rules)。
+- **WorkBuddy reverse proxy / 反向代理**：查看[会话请求头](#conversation-headers)及[国内 / 国际区边界](#platform-scope)；来源中的 CodeBuddy 生产结论不是 WorkBuddy 所有区域的独立验证。
+
+<a id="english"></a>
+
+## English · CodeBuddy / WorkBuddy error reference
+
+**Unofficial troubleshooting notes and request compatibility rules for CodeBuddy and WorkBuddy with third-party agents: Claude Code, Codex, and DeepSeek Harness (DSH).** Intended for developers integrating a self-hosted gateway or reverse proxy. This is a documentation-only repository, not a runnable proxy, official SDK, or access authorization.
+
+### Where to start
+
+- **CodeBuddy HTTP 400 / 11128** or **“Illegal API invocation from an unapproved channel”**: examine request roles, known client identity text, and assistant history. The code alone does not identify the cause. See [production incident records](#incident-records) and [identity rules](#identity-rules).
+- **WorkBuddy 11128**: distinguish message shape and conversation headers from prompt text. **“first message is not system prompt”** is reported in external material, not independently reproduced here. See [conversation headers](#conversation-headers) and [regional scope](#platform-scope).
+- **CodeBuddy model catalog error “check ua, get coding copilot version error”**: this concerns the catalog endpoint and version-related headers, not every chat request. See [catalog request notes](#catalog-headers).
+- **CodeBuddy 11101 / “Non-stream chat request is currently not supported”**: inspect upstream streaming behavior and completion checks. See [protocol rules](#protocol-rules).
+- **DeepSeek Harness / DSH requests rejected by CodeBuddy**: production repair records describe a GUI sentence regression, assistant identity quotations, and an isolated two-sentence path-preamble case. See [DSH rules](#dsh-rules).
+- **11140, 429, 6004, or 401**: these are not established identity-text fixes. Diagnose account, quota, rate, permission, and credential conditions separately. See [out-of-scope restrictions](#not-identity-fixes).
+
+### Evidence and limitations
+
+**P** = production repair record; **A** = production record explicitly describing live isolation/bisection; **E** = external report cited by the source research. Source records support historical repairs; they are not a guarantee for current versions. The public repository does not publish private logs or private source links. WorkBuddy international prompt filtering must not be inferred from domestic behavior. The latest documentation review is **2026-10-31**; it is **not a live-platform test date**. Exact historical live-test dates and complete account/client version matrices are not established in this public reference.
+
+No promise of bypassing channel checks, avoiding account restrictions, or obtaining third-party authorization is made. Changes may affect model/tool behavior. Never publish credentials, private prompts, or production dumps. Read the [full risk disclosure](#disclaimer) before applying any rule.
+
+[中文规则与案例 / Chinese rules and cases ↓](#rule-index)
 
 ## 项目速览
 
@@ -35,6 +88,7 @@ Protocol compatibility · Client identity text · Header boundaries
 
 ## 📖 阅读导航
 
+- [🔎 错误原文索引](#error-index) · [English reference](#english)：按报错和客户端直接定位。
 - [平台与区域](#platform-scope)：先看哪些经验不能跨区域套用。
 - [🧭 排障案例与验证来源](#incident-records)：遇到什么、怎么定位、怎么修复。
 - [一、协议格式](#protocol-rules)：角色、工具选择、流式与用量。
@@ -80,6 +134,20 @@ Protocol compatibility · Client identity text · Header boundaries
 - **E · 外部调研记录**：来源调研引用外部实现或实验，不冒充本项目独立复现；本文未重新访问或复核外部实验。
 - 本节按问题组织，不承诺是完整时间线，也不将某次成功推广为所有平台的通用规律。
 
+### 证据与复核状态登记
+
+**最近文档复核：2026-10-31。** 这是规则描述与来源记录的整理日期，不是对各平台重新进行真实请求验证的日期。下表补充案例表的共同元数据；具体适用范围仍以每条记录为准。
+
+| 条目组 | 平台 / 区域 | 证据类型 | 历史验证信息与未知项 | 本次复核状态 |
+|---|---|---|---|---|
+| Claude 身份、反馈、分支与 Codex 来源句 | CodeBuddy 接入；历史区域、完整客户端版本未逐项确认 | P | 有修复历史；逐条真实实验日期、完整 A/B 原始记录未知 | 文档与修复说明核对；未重跑线上实验 |
+| developer 角色、DSH 身份与 GUI 回归 | CodeBuddy 接入；不扩展到全部区域；developer 回退错误另有非 Buddy 上游 | P | 有原因与处理记录；完整模型 / 版本矩阵未知 | 文档与实现核对；未重跑线上实验 |
+| assistant 身份复述、DSH 两句路径组合 | CodeBuddy 接入；不自动推广到 WorkBuddy | A | 修复说明明确记载真实上游隔离 / 二分；精确实验日期及完整版本矩阵未公开确认 | 核对隔离说明与规则边界；未重新读取原始流量 |
+| 模型目录版本头、非流式与具名工具选择 | CodeBuddy 对应端点；目录与聊天分开看 | P | 目录版本错误有实现记录；非流式有接入验证说明；具名工具不主张全模型实测 | 描述与来源核对；无新增真实调用 |
+| 国内区身份规则启用 | WorkBuddy 国内区 | 实现策略；借鉴 CodeBuddy 记录和外部材料，**非独立全链路验证** | 知道实现开启范围；逐条生产验证时间与客户端矩阵未知 | 仅确认来源实现策略 |
+| 会话头、首条 system 错误形态 | WorkBuddy；会话头与国际区有关，首条错误的具体区域未知 | E + 本地适配实现 | 引用外部实验；不能记作本项目完成的独立复现 | 未重新核验外部实验或进行真实 A/B |
+| 11140 / 429 / 6004 / 401 | 依实际上游、区域、账号分类 | 错误处理分类，**不是已解除限制的验证** | 不主张这些限制已被规则解决 | 仅核对分类边界 |
+
 ### 生产中积累的身份与角色处理
 
 | 案例 | 遇到的现象与定位 | 采用的处理 / 历史结果 | 依据 |
@@ -108,6 +176,8 @@ Protocol compatibility · Client identity text · Header boundaries
 | 回退目标拒绝 developer | 排障说明记录最终 `422 unknown variant developer` 来自另一家回退上游，不是 CodeBuddy | 通用 OpenAI 兼容路径也规范化角色；提示排查时分清每次尝试的真实上游 | P：生产排障说明；不是新增的 Buddy 指纹规则 |
 
 WorkBuddy 外部记录的原始参考项目包括 [WorkBuddy2API-Hub](https://github.com/ardeyouxipianyi/workbuddy2api-hub)；本文不复制其源码、不承诺其当前状态，也不把外部验证计入本项目亲自实测的数量。
+
+<a id="not-identity-fixes"></a>
 
 ### 哪些不能归入“清洗已解决”
 
@@ -147,6 +217,8 @@ WorkBuddy 外部记录的原始参考项目包括 [WorkBuddy2API-Hub](https://gi
 - **删除**：针对选定的产品样板片段（Claude Code、Codex）；即使是样板，删除也可能改变模型行为，需要宿主回归验证。
 - **改写**：对包含任务上下文的句子尽量保留含义（DSH）；不保证语义完全等价，也不保证改写后能通过当前平台校验。
 
+<a id="claude-codex-rules"></a>
+
 ### Claude Code / Codex：删除选定样板
 
 下表是文本处理建议，正则采用 Python `re` 语法。身份句规则锚定行首，但只移除匹配片段，不保证整行删除；反馈链接规则要求独立整行，以免误删 URL 后缀或同行指令。普通品牌提及不应泛删。
@@ -168,6 +240,8 @@ WorkBuddy 外部记录的原始参考项目包括 [WorkBuddy2API-Hub](https://gi
 | 规则 ID | 原文（合成示例） | 改成 | 正则与替换 |
 |---|---|---|---|
 | `identity.claude-main-branch` | `Main branch (you will usually use this for PRs): example-branch` | `Main branch: example-branch` | `(?m)^([ \t]*)Main branch \(you will usually use this for PRs\):([ \t]*[^\r\n]+)$` → `\1Main branch:\2` |
+
+<a id="dsh-rules"></a>
 
 ### DeepSeek Harness（DSH）：改写措辞
 
